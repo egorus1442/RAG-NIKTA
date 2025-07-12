@@ -1,0 +1,30 @@
+[Unit]
+Description=RAG API Service
+After=network.target
+
+[Service]
+Type=simple
+User=rag-user
+Group=rag-user
+WorkingDirectory=/opt/rag
+Environment=PATH=/opt/rag/venv/bin
+ExecStart=/opt/rag/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+
+# Переменные окружения
+Environment=OPENAI_API_KEY=your_openai_api_key_here
+Environment=OPENROUTER_API_KEY=your_openrouter_api_key_here
+Environment=API_TOKEN=your_api_token_here
+Environment=UPLOAD_DIR=uploads
+Environment=CHUNK_SIZE=1000
+Environment=CHUNK_OVERLAP=200
+Environment=TOP_K=5
+
+# Логирование
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rag-api
+
+[Install]
+WantedBy=multi-user.target 

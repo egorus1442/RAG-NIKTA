@@ -37,16 +37,29 @@ class EmbeddingsService:
             # Создаем уникальные ID для каждого чанка
             ids = [f"{file_id}_{i}" for i in range(len(chunks))]
             
-            # Подготавливаем метаданные
+            # Подготавливаем метаданные (упрощаем для ChromaDB)
             metadatas = []
             for i, chunk in enumerate(chunks):
                 chunk_metadata = {
                     "file_id": file_id,
-                    "chunk_index": i,
-                    "chunk_size": len(chunk)
+                    "chunk_index": str(i),
+                    "chunk_size": str(len(chunk))
                 }
+                
+                # Добавляем только простые метаданные из исходного файла
                 if metadata:
-                    chunk_metadata.update(metadata)
+                    # Копируем только простые поля
+                    simple_fields = [
+                        "filename", "file_size", "total_chunks", 
+                        "file_type", "original_path", "txt_path", 
+                        "conversion_method"
+                    ]
+                    for field in simple_fields:
+                        if field in metadata:
+                            value = metadata[field]
+                            # Преобразуем в строку для ChromaDB
+                            chunk_metadata[field] = str(value) if value is not None else ""
+                
                 metadatas.append(chunk_metadata)
             
             # Добавляем в коллекцию
@@ -100,4 +113,19 @@ class EmbeddingsService:
                 self.collection.delete(ids=results['ids'])
                 
         except Exception as e:
-            raise Exception(f"Ошибка при удалении документа из ChromaDB: {str(e)}") 
+            raise Exception(f"Ошибка при удалении документа из ChromaDB: {str(e)}")
+    
+    def clear_all(self):
+        """Очищает всю коллекцию ChromaDB"""
+        try:
+            # Удаляем всю коллекцию
+            self.chroma_client.delete_collection(name="documents")
+            
+            # Создаем новую пустую коллекцию
+            self.collection = self.chroma_client.create_collection(
+                name="documents",
+                metadata={"hnsw:space": "cosine"}
+            )
+                
+        except Exception as e:
+            raise Exception(f"Ошибка при очистке ChromaDB: {str(e)}") 

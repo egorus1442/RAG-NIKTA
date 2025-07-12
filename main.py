@@ -1,5 +1,4 @@
 import os
-import uuid
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from typing import List
@@ -10,6 +9,7 @@ from models import QueryRequest, QueryResponse, UploadResponse, DeleteResponse, 
 from utils.text_extractor import TextExtractor
 from services.embeddings_service import EmbeddingsService
 from services.llm_service import LLMService
+from services.file_processor import FileProcessor
 
 app = FastAPI(
     title="RAG API",
@@ -20,66 +20,56 @@ app = FastAPI(
 # Инициализируем сервисы
 embeddings_service = EmbeddingsService()
 llm_service = LLMService()
+file_processor = FileProcessor(Config.UPLOAD_DIR)
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
     token: str = Depends(verify_token)
 ):
-    """Загружает файл, извлекает текст и сохраняет эмбединги"""
+    """Загружает файл, конвертирует в txt и сохраняет эмбединги"""
     try:
-        # Проверяем поддерживаемые форматы
+        # Проверяем, что файл не пустой
         if not file.filename:
             raise HTTPException(status_code=400, detail="Имя файла не может быть пустым")
-            
-        allowed_extensions = {'.pdf', '.docx', '.txt'}
-        file_extension = os.path.splitext(file.filename)[1].lower()
         
-        if file_extension not in allowed_extensions:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Неподдерживаемый формат файла. Поддерживаемые форматы: {', '.join(allowed_extensions)}"
-            )
+        # Читаем содержимое файла
+        content = await file.read()
         
-        # Генерируем уникальный ID файла
-        file_id = str(uuid.uuid4())
-        file_path = os.path.join(Config.UPLOAD_DIR, f"{file_id}_{file.filename}")
+        # Обрабатываем файл через FileProcessor
+        file_data = file_processor.process_uploaded_file(content, file.filename)
         
-        # Сохраняем файл
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Извлекаем текст
-        text = TextExtractor.extract_text(file_path)
-        
-        # Разбиваем на чанки
+        # Разбиваем текст на чанки
         chunks = TextExtractor.chunk_text(
-            text, 
-            chunk_size=Config.CHUNK_SIZE, 
-            overlap=Config.CHUNK_OVERLAP
+            file_data['text'], 
+            Config.CHUNK_SIZE, 
+            Config.CHUNK_OVERLAP
         )
         
-        # Сохраняем эмбединги
-        metadata = {
-            "filename": file.filename,
-            "file_size": len(content),
-            "total_chunks": len(chunks)
+        # Подготавливаем метаданные для сохранения
+        file_metadata = {
+            "filename": file_data['original_filename'],
+            "file_size": file_data['file_size'],
+            "total_chunks": len(chunks),
+            "file_type": file_data['file_type'],
+            "original_path": file_data['original_path'],
+            "txt_path": file_data['txt_path'],
+            "extraction_metadata": file_data['extraction_metadata']
         }
         
-        embeddings_service.store_document(file_id, chunks, metadata)
+        # Сохраняем эмбединги
+        embeddings_service.store_document(file_data['file_id'], chunks, file_metadata)
         
         return UploadResponse(
-            file_id=file_id,
-            filename=file.filename or "unknown",
+            file_id=file_data['file_id'],
+            filename=file_data['original_filename'],
             chunks_count=len(chunks),
-            message="Файл успешно загружен и обработан"
+            message="Файл успешно загружен, конвертирован в txt и обработан"
         )
         
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # Удаляем файл в случае ошибки
-        if 'file_path' in locals() and os.path.exists(file_path):
-            os.remove(file_path)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/file/{file_id}", response_model=DeleteResponse)
@@ -92,18 +82,45 @@ async def delete_file(
         # Удаляем из ChromaDB
         embeddings_service.delete_document(file_id)
         
-        # Удаляем файл с диска
-        upload_dir = Config.UPLOAD_DIR
-        for filename in os.listdir(upload_dir):
-            if filename.startswith(file_id):
-                file_path = os.path.join(upload_dir, filename)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                break
+        # Удаляем файлы с диска
+        deleted = file_processor.delete_file_versions(file_id)
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Файл не найден")
         
         return DeleteResponse(
             file_id=file_id,
-            message="Файл успешно удален"
+            message="Файл и все связанные версии успешно удалены"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/clear-all", response_model=DeleteResponse)
+async def clear_all_data(
+    token: str = Depends(verify_token)
+):
+    """Удаляет все файлы и данные из системы"""
+    try:
+        # Очищаем ChromaDB
+        embeddings_service.clear_all()
+        
+        # Очищаем папку uploads
+        import shutil
+        import os
+        
+        upload_dir = Config.UPLOAD_DIR
+        if os.path.exists(upload_dir):
+            for filename in os.listdir(upload_dir):
+                file_path = os.path.join(upload_dir, filename)
+                if os.path.isfile(file_path) and filename != '.gitkeep':
+                    os.remove(file_path)
+        
+        return DeleteResponse(
+            file_id="all",
+            message="Все файлы и данные успешно удалены из системы"
         )
         
     except Exception as e:
@@ -123,13 +140,25 @@ async def query_documents(
         )
         
         # Генерируем ответ
-        answer = llm_service.generate_response(request.question, similar_docs)
+        response_data = llm_service.generate_response(request.question, similar_docs)
+        answer = response_data["answer"]
+        tokens = response_data["tokens"]
         
-        return QueryResponse(
-            answer=answer,
-            context_documents=similar_docs,
-            question=request.question
-        )
+        # Формируем ответ в зависимости от опции include_context
+        if request.include_context:
+            return QueryResponse(
+                answer=answer,
+                context_documents=similar_docs,
+                question=request.question,
+                tokens=tokens
+            )
+        else:
+            return QueryResponse(
+                answer=answer,
+                context_documents=None,
+                question=request.question,
+                tokens=tokens
+            )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
