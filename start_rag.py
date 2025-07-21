@@ -1,7 +1,3 @@
-"""
-Автоматический запуск RAG API с исправлением проблем
-"""
-
 import subprocess
 import sys
 import os

@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Скрипт для исправления проблем с зависимостями RAG API
-"""
-
 import subprocess
 import sys
 import os

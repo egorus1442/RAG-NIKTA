@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Скрипт мониторинга RAG API
 set -e
 

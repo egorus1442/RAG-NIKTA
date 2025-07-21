@@ -1,7 +1,3 @@
-"""
-Скрипт для мониторинга логов RAG API в реальном времени
-"""
-
 import time
 import os
 import sys

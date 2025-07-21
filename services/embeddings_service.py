@@ -58,6 +58,9 @@ class EmbeddingsService:
                         if field in metadata:
                             value = metadata[field]
                             # Преобразуем в строку для ChromaDB
+                            if isinstance(value, (dict, list)):
+                                # Пропускаем сложные типы данных
+                                continue
                             chunk_metadata[field] = str(value) if value is not None else ""
                 
                 metadatas.append(chunk_metadata)

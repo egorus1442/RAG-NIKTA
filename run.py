@@ -1,7 +1,3 @@
-"""
-Скрипт для запуска RAG API
-"""
-
 import uvicorn
 import os
 import subprocess
@@ -61,7 +57,13 @@ def main():
     load_dotenv()
     
     # Проверяем наличие необходимых переменных
-    required_vars = ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "API_TOKEN"]
+    required_vars = ["API_TOKEN"]  # Только API_TOKEN обязателен
+    
+    # Проверяем OpenAI API ключ только если используется OpenAI для эмбедингов
+    embedding_type = os.getenv("EMBEDDING_TYPE", "openai").lower()
+    if embedding_type == "openai" and not os.getenv("OPENAI_API_KEY"):
+        required_vars.append("OPENAI_API_KEY")
+    
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:

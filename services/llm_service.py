@@ -12,6 +12,10 @@ class LLMService:
     def generate_response(self, question: str, context_documents: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Генерирует ответ на основе вопроса и контекстных документов"""
         try:
+            # Проверяем наличие API ключа
+            if not self.api_key or not self.api_key.strip():
+                raise Exception("OPENROUTER_API_KEY не установлен. Задайте ключ через эндпоинт /set-openrouter-key.")
+            
             # Формируем контекст из документов (ограничиваем размер)
             context_text = self._format_context(context_documents)
             

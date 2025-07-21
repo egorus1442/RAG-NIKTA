@@ -5,9 +5,13 @@ from typing import List
 
 from config import Config
 from auth import verify_token
-from models import QueryRequest, QueryResponse, UploadResponse, DeleteResponse, ErrorResponse
+from models import (
+    QueryRequest, QueryResponse, UploadResponse, DeleteResponse, 
+    ErrorResponse, ApiKeyRequest, ApiKeyResponse, 
+    EmbeddingTypeRequest, EmbeddingTypeResponse
+)
 from utils.text_extractor import TextExtractor
-from services.embeddings_service import EmbeddingsService
+from services.embeddings_factory import EmbeddingsFactory
 from services.llm_service import LLMService
 from services.file_processor import FileProcessor
 
@@ -18,7 +22,7 @@ app = FastAPI(
 )
 
 # Инициализируем сервисы
-embeddings_service = EmbeddingsService()
+embeddings_service = EmbeddingsFactory.create_embeddings_service()
 llm_service = LLMService()
 file_processor = FileProcessor(Config.UPLOAD_DIR)
 
@@ -159,6 +163,109 @@ async def query_documents(
                 question=request.question,
                 tokens=tokens
             )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/set-openrouter-key", response_model=ApiKeyResponse)
+async def set_openrouter_api_key(
+    request: ApiKeyRequest,
+    token: str = Depends(verify_token)
+):
+    """Устанавливает OPENROUTER_API_KEY для использования в LLM сервисе"""
+    try:
+        # Проверяем, что API ключ не пустой
+        if not request.api_key or request.api_key.strip() == "":
+            raise HTTPException(status_code=400, detail="API ключ не может быть пустым")
+        
+        # Устанавливаем новый API ключ в конфигурацию
+        Config.OPENROUTER_API_KEY = request.api_key.strip()
+        
+        # Обновляем API ключ в LLM сервисе
+        llm_service.api_key = Config.OPENROUTER_API_KEY
+        
+        # Опционально: можно сохранить в .env файл для персистентности
+        # Но для простоты пока просто обновляем в памяти
+        
+        return ApiKeyResponse(
+            message="OPENROUTER_API_KEY успешно обновлен",
+            status="success"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/openrouter-key-status", response_model=ApiKeyResponse)
+async def get_openrouter_key_status(
+    token: str = Depends(verify_token)
+):
+    """Проверяет статус OPENROUTER_API_KEY"""
+    try:
+        if Config.OPENROUTER_API_KEY:
+            return ApiKeyResponse(
+                message="OPENROUTER_API_KEY установлен",
+                status="configured"
+            )
+        else:
+            return ApiKeyResponse(
+                message="OPENROUTER_API_KEY не установлен",
+                status="not_configured"
+            )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/set-embedding-type", response_model=EmbeddingTypeResponse)
+async def set_embedding_type(
+    request: EmbeddingTypeRequest,
+    token: str = Depends(verify_token)
+):
+    """Устанавливает тип эмбедингов (OpenAI или Local)"""
+    try:
+        embedding_type = request.embedding_type.lower()
+        
+        # Проверяем, что тип поддерживается
+        if embedding_type not in EmbeddingsFactory.get_available_types():
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Неподдерживаемый тип эмбедингов: {embedding_type}. Доступные типы: {EmbeddingsFactory.get_available_types()}"
+            )
+        
+        # Обновляем конфигурацию
+        Config.EMBEDDING_TYPE = embedding_type
+        
+        # Пересоздаем сервис эмбедингов
+        global embeddings_service
+        embeddings_service = EmbeddingsFactory.create_embeddings_service()
+        
+        return EmbeddingTypeResponse(
+            message=f"Тип эмбедингов успешно изменен на {embedding_type}",
+            status="success",
+            current_type=embedding_type,
+            available_types=EmbeddingsFactory.get_available_types()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/embedding-type-status", response_model=EmbeddingTypeResponse)
+async def get_embedding_type_status(
+    token: str = Depends(verify_token)
+):
+    """Проверяет текущий тип эмбедингов"""
+    try:
+        current_type = EmbeddingsFactory.get_current_type()
+        
+        return EmbeddingTypeResponse(
+            message=f"Текущий тип эмбедингов: {current_type}",
+            status="success",
+            current_type=current_type,
+            available_types=EmbeddingsFactory.get_available_types()
+        )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

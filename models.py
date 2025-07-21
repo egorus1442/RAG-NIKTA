@@ -22,6 +22,22 @@ class DeleteResponse(BaseModel):
     file_id: str
     message: str
 
+class ApiKeyRequest(BaseModel):
+    api_key: str
+
+class ApiKeyResponse(BaseModel):
+    message: str
+    status: str
+
+class EmbeddingTypeRequest(BaseModel):
+    embedding_type: str  # "openai" или "local"
+
+class EmbeddingTypeResponse(BaseModel):
+    message: str
+    status: str
+    current_type: str
+    available_types: List[str]
+
 class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None 

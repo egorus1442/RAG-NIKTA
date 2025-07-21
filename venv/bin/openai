@@ -1,4 +1,4 @@
-#!/Users/apple/Desktop/projects/RAG-prod/venv/bin/python3.12
+#!/Users/apple/Desktop/projects/RAG NIKTA/venv/bin/python3.11
 # -*- coding: utf-8 -*-
 import re
 import sys
