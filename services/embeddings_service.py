@@ -12,8 +12,15 @@ class EmbeddingsService:
             path="./chroma_db",
             settings=Settings(anonymized_telemetry=False)
         )
-        self.collection = self.chroma_client.get_or_create_collection(
+        self.default_collection = self.chroma_client.get_or_create_collection(
             name="documents",
+            metadata={"hnsw:space": "cosine"}
+        )
+    
+    def get_collection(self, collection_name: str):
+        """Получает или создает коллекцию по имени"""
+        return self.chroma_client.get_or_create_collection(
+            name=collection_name,
             metadata={"hnsw:space": "cosine"}
         )
     
@@ -28,7 +35,7 @@ class EmbeddingsService:
         except Exception as e:
             raise Exception(f"Ошибка при получении эмбедингов: {str(e)}")
     
-    def store_document(self, file_id: str, chunks: List[str], metadata: Dict[str, Any] = None):
+    def store_document(self, file_id: str, chunks: List[str], metadata: Dict[str, Any] = None, collection_name: str = "documents"):
         """Сохраняет документ в ChromaDB"""
         try:
             # Получаем эмбединги для всех чанков
@@ -65,8 +72,11 @@ class EmbeddingsService:
                 
                 metadatas.append(chunk_metadata)
             
+            # Получаем нужную коллекцию
+            collection = self.get_collection(collection_name)
+            
             # Добавляем в коллекцию
-            self.collection.add(
+            collection.add(
                 embeddings=embeddings,
                 documents=chunks,
                 metadatas=metadatas,
@@ -76,14 +86,17 @@ class EmbeddingsService:
         except Exception as e:
             raise Exception(f"Ошибка при сохранении документа в ChromaDB: {str(e)}")
     
-    def search_similar(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    def search_similar(self, query: str, top_k: int = 5, collection_name: str = "documents") -> List[Dict[str, Any]]:
         """Ищет похожие документы в ChromaDB"""
         try:
             # Получаем эмбединг для запроса
             query_embedding = self.get_embeddings([query])[0]
             
+            # Получаем нужную коллекцию
+            collection = self.get_collection(collection_name)
+            
             # Ищем похожие документы
-            results = self.collection.query(
+            results = collection.query(
                 query_embeddings=[query_embedding],
                 n_results=top_k
             )
@@ -91,9 +104,11 @@ class EmbeddingsService:
             # Формируем результат
             documents = []
             if results['documents'] and results['documents'][0]:
-                for i, doc in enumerate(results['documents'][0]):
+                # Ограничиваем количество результатов до top_k
+                max_results = min(top_k, len(results['documents'][0]))
+                for i in range(max_results):
                     documents.append({
-                        'document': doc,
+                        'document': results['documents'][0][i],
                         'metadata': results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {},
                         'distance': results['distances'][0][i] if results['distances'] and results['distances'][0] else 0
                     })
@@ -103,30 +118,33 @@ class EmbeddingsService:
         except Exception as e:
             raise Exception(f"Ошибка при поиске похожих документов: {str(e)}")
     
-    def delete_document(self, file_id: str):
+    def delete_document(self, file_id: str, collection_name: str = "documents"):
         """Удаляет документ из ChromaDB"""
         try:
+            # Получаем нужную коллекцию
+            collection = self.get_collection(collection_name)
+            
             # Получаем все записи для данного file_id
-            results = self.collection.get(
+            results = collection.get(
                 where={"file_id": file_id}
             )
             
             if results['ids']:
                 # Удаляем все записи
-                self.collection.delete(ids=results['ids'])
+                collection.delete(ids=results['ids'])
                 
         except Exception as e:
             raise Exception(f"Ошибка при удалении документа из ChromaDB: {str(e)}")
     
-    def clear_all(self):
+    def clear_all(self, collection_name: str = "documents"):
         """Очищает всю коллекцию ChromaDB"""
         try:
             # Удаляем всю коллекцию
-            self.chroma_client.delete_collection(name="documents")
+            self.chroma_client.delete_collection(name=collection_name)
             
             # Создаем новую пустую коллекцию
             self.collection = self.chroma_client.create_collection(
-                name="documents",
+                name=collection_name,
                 metadata={"hnsw:space": "cosine"}
             )
                 

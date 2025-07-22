@@ -20,13 +20,20 @@ class LocalEmbeddingsService:
             path="./chroma_db",
             settings=Settings(anonymized_telemetry=False)
         )
-        self.collection = self.chroma_client.get_or_create_collection(
+        self.default_collection = self.chroma_client.get_or_create_collection(
             name="documents",
             metadata={"hnsw:space": "cosine"}
         )
         
         # Инициализируем модель при создании сервиса
         self._load_model()
+    
+    def get_collection(self, collection_name: str):
+        """Получает или создает коллекцию по имени"""
+        return self.chroma_client.get_or_create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"}
+        )
     
     def _load_model(self):
         """Загружает модель для генерации эмбедингов"""
@@ -53,7 +60,7 @@ class LocalEmbeddingsService:
         except Exception as e:
             raise Exception(f"Ошибка при получении эмбедингов: {str(e)}")
     
-    def store_document(self, file_id: str, chunks: List[str], metadata: Dict[str, Any]):
+    def store_document(self, file_id: str, chunks: List[str], metadata: Dict[str, Any], collection_name: str = "documents"):
         """Сохраняет документ и его эмбединги в ChromaDB"""
         try:
             # Получаем эмбединги для всех чанков
@@ -74,27 +81,33 @@ class LocalEmbeddingsService:
                 metadatas.append(chunk_metadata)
                 ids.append(f"{file_id}_chunk_{i}")
             
+            # Получаем нужную коллекцию
+            collection = self.get_collection(collection_name)
+            
             # Добавляем в ChromaDB
-            self.collection.add(
+            collection.add(
                 embeddings=embeddings,  # type: ignore
                 documents=chunks,
                 metadatas=metadatas,
                 ids=ids
             )
             
-            logger.info(f"Документ {file_id} сохранен с {len(chunks)} чанками")
+            logger.info(f"Документ {file_id} сохранен с {len(chunks)} чанками в коллекции {collection_name}")
             
         except Exception as e:
             raise Exception(f"Ошибка при сохранении документа: {str(e)}")
     
-    def search_similar(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    def search_similar(self, query: str, top_k: int = 5, collection_name: str = "documents") -> List[Dict[str, Any]]:
         """Ищет похожие документы по запросу"""
         try:
             # Получаем эмбединг для запроса
             query_embedding = self.get_embeddings([query])[0]
             
+            # Получаем нужную коллекцию
+            collection = self.get_collection(collection_name)
+            
             # Ищем похожие документы
-            results = self.collection.query(
+            results = collection.query(
                 query_embeddings=[query_embedding],
                 n_results=top_k
             )
@@ -102,9 +115,11 @@ class LocalEmbeddingsService:
             # Формируем результат
             similar_docs = []
             if results['documents'] and results['documents'][0]:
-                for i, doc in enumerate(results['documents'][0]):
+                # Ограничиваем количество результатов до top_k
+                max_results = min(top_k, len(results['documents'][0]))
+                for i in range(max_results):
                     similar_docs.append({
-                        'document': doc,
+                        'document': results['documents'][0][i],
                         'metadata': results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0] else {},
                         'distance': results['distances'][0][i] if results['distances'] and results['distances'][0] else 0.0
                     })
@@ -114,26 +129,33 @@ class LocalEmbeddingsService:
         except Exception as e:
             raise Exception(f"Ошибка при поиске похожих документов: {str(e)}")
     
-    def delete_document(self, file_id: str):
+    def delete_document(self, file_id: str, collection_name: str = "documents"):
         """Удаляет документ и его эмбединги из ChromaDB"""
         try:
+            # Получаем нужную коллекцию
+            collection = self.get_collection(collection_name)
+            
             # Получаем все ID чанков для данного файла
-            results = self.collection.get(
+            results = collection.get(
                 where={"file_id": file_id}
             )
             
             if results['ids']:
-                self.collection.delete(ids=results['ids'])
-                logger.info(f"Документ {file_id} удален из ChromaDB")
+                collection.delete(ids=results['ids'])
+                logger.info(f"Документ {file_id} удален из ChromaDB коллекции {collection_name}")
             
         except Exception as e:
             raise Exception(f"Ошибка при удалении документа: {str(e)}")
     
-    def clear_all(self):
+    def clear_all(self, collection_name: str = "documents"):
         """Очищает все данные из ChromaDB"""
         try:
-            self.chroma_client.reset()
-            logger.info("ChromaDB очищена")
+            self.chroma_client.delete_collection(name=collection_name)
+            self.chroma_client.create_collection(
+                name=collection_name,
+                metadata={"hnsw:space": "cosine"}
+            )
+            logger.info(f"Коллекция {collection_name} очищена")
         except Exception as e:
             raise Exception(f"Ошибка при очистке ChromaDB: {str(e)}")
     

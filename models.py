@@ -41,3 +41,14 @@ class EmbeddingTypeResponse(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None 
+
+class CollectionRequest(BaseModel):
+    collection_name: str
+
+class CollectionResponse(BaseModel):
+    message: str
+    status: str
+
+class ListCollectionsResponse(BaseModel):
+    collections: List[str]
+    status: str 

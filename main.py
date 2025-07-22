@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Form, Query
 from fastapi.responses import JSONResponse
 from typing import List
 
@@ -8,12 +8,14 @@ from auth import verify_token
 from models import (
     QueryRequest, QueryResponse, UploadResponse, DeleteResponse, 
     ErrorResponse, ApiKeyRequest, ApiKeyResponse, 
-    EmbeddingTypeRequest, EmbeddingTypeResponse
+    EmbeddingTypeRequest, EmbeddingTypeResponse,
+    CollectionRequest, CollectionResponse, ListCollectionsResponse
 )
 from utils.text_extractor import TextExtractor
 from services.embeddings_factory import EmbeddingsFactory
 from services.llm_service import LLMService
 from services.file_processor import FileProcessor
+from services.collections_service import CollectionsService
 
 app = FastAPI(
     title="RAG API",
@@ -25,10 +27,12 @@ app = FastAPI(
 embeddings_service = EmbeddingsFactory.create_embeddings_service()
 llm_service = LLMService()
 file_processor = FileProcessor(Config.UPLOAD_DIR)
+collections_service = CollectionsService()
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_file(
     file: UploadFile = File(...),
+    collection: str = Query(..., description="Название коллекции"),
     token: str = Depends(verify_token)
 ):
     """Загружает файл, конвертирует в txt и сохраняет эмбединги"""
@@ -62,7 +66,7 @@ async def upload_file(
         }
         
         # Сохраняем эмбединги
-        embeddings_service.store_document(file_data['file_id'], chunks, file_metadata)
+        embeddings_service.store_document(file_data['file_id'], chunks, file_metadata, collection)
         
         return UploadResponse(
             file_id=file_data['file_id'],
@@ -79,12 +83,13 @@ async def upload_file(
 @app.delete("/file/{file_id}", response_model=DeleteResponse)
 async def delete_file(
     file_id: str,
+    collection: str = Query(..., description="Название коллекции"),
     token: str = Depends(verify_token)
 ):
     """Удаляет файл и его эмбединги"""
     try:
         # Удаляем из ChromaDB
-        embeddings_service.delete_document(file_id)
+        embeddings_service.delete_document(file_id, collection)
         
         # Удаляем файлы с диска
         deleted = file_processor.delete_file_versions(file_id)
@@ -109,7 +114,7 @@ async def clear_all_data(
     """Удаляет все файлы и данные из системы"""
     try:
         # Очищаем ChromaDB
-        embeddings_service.clear_all()
+        embeddings_service.clear_all("documents")  # Очищаем только дефолтную коллекцию
         
         # Очищаем папку uploads
         import shutil
@@ -133,6 +138,7 @@ async def clear_all_data(
 @app.post("/query", response_model=QueryResponse)
 async def query_documents(
     request: QueryRequest,
+    collection: str = Query(..., description="Название коллекции"),
     token: str = Depends(verify_token)
 ):
     """Выполняет поиск по документам и генерирует ответ"""
@@ -140,7 +146,8 @@ async def query_documents(
         # Ищем похожие документы
         similar_docs = embeddings_service.search_similar(
             request.question, 
-            top_k=Config.TOP_K
+            top_k=Config.TOP_K,
+            collection_name=collection
         )
         
         # Генерируем ответ
@@ -267,6 +274,36 @@ async def get_embedding_type_status(
             available_types=EmbeddingsFactory.get_available_types()
         )
         
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/create-collection", response_model=CollectionResponse)
+async def create_collection(
+    request: CollectionRequest,
+    token: str = Depends(verify_token)
+):
+    try:
+        collections_service.create_collection(request.collection_name)
+        return CollectionResponse(message="Коллекция успешно создана", status="success")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/delete-collection", response_model=CollectionResponse)
+async def delete_collection(
+    request: CollectionRequest,
+    token: str = Depends(verify_token)
+):
+    try:
+        collections_service.delete_collection(request.collection_name)
+        return CollectionResponse(message="Коллекция успешно удалена", status="success")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/list-collections", response_model=ListCollectionsResponse)
+async def list_collections(token: str = Depends(verify_token)):
+    try:
+        collections = collections_service.list_collections()
+        return ListCollectionsResponse(collections=collections, status="success")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
